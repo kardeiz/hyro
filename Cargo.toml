@@ -1,0 +1,10 @@
+[package]
+authors = ["Jacob Brown <kardeiz@gmail.com>"]
+name = "hyro"
+version = "0.1.0"
+
+[dependencies]
+hyper = "0.9.10"
+
+[dev-dependencies]
+num_cpus = "1.1.0"
