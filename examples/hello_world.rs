@@ -5,13 +5,6 @@ extern crate hyper;
 extern crate num_cpus;
 
 use hyper::server::{Server, Request, Response};
-use hyper::method::Method;
-
-use std::io::Read;
-
-fn handle_numbers(_: &Request, res: Response, id: i32) {
-    res.send(format!("NUMBER: {}", id).as_bytes()).unwrap();
-}
 
 fn main() {
 
@@ -37,7 +30,7 @@ fn main() {
         
         let matcher = hyro::Matcher::build(&req.uri);
 
-        if let Some(m) = matcher.chomp(&"/foo") {
+        if let Some(m) = matcher.chomp("/foo") {
             if let Some(_) = m.complete("/").or(m.complete("")) {
                 res.send(b"YES").unwrap();
                 return;
@@ -45,10 +38,10 @@ fn main() {
         }
 
         if let Some(m) = matcher.chomp('/')
-            .and_then(|m| m.take_while(char::is_numeric)) {
+            .and_then(|m| m.capture_while(char::is_numeric)) {
             let (digits,) = m.captures();
             if digits.len() > 5 {
-                res.send(b"that's a big number!").unwrap();
+                res.send(b"a big number").unwrap();
             } else {
                 res.send(b"not a big number").unwrap();
             }
@@ -56,10 +49,10 @@ fn main() {
         }
 
         if let Some(m) = matcher.chomp("/bars/").iter()
-            .flat_map(|m| m.take_while(char::is_numeric) )
+            .flat_map(|m| m.capture_while(char::is_numeric) )
             .flat_map(|m| m.chomp('/') )
-            .map(|m| m.take_until('.') )
-            .map(|m| m.take_rest() )
+            .map(|m| m.capture_until('.') )
+            .map(|m| m.capture_rest() )
             .next() {
             
             let (id, action, format) = m.captures();

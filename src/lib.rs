@@ -6,19 +6,19 @@ extern crate hyper;
 use std::str::pattern::{Pattern, SearchStep, Searcher};
 
 #[derive(Copy, Clone, Debug)]
-pub struct Uri<'a> { 
-    pub path: &'a str,
-    pub query: Option<&'a str>
+struct Parts<'a> { 
+    path: &'a str,
+    query: Option<&'a str>
 }
 
 #[derive(Debug, Clone)]
 pub struct Matcher<'a, T=()> {
-    pub uri: Uri<'a>,
-    pub cursor: usize,
-    pub captures: T
+    parts: Parts<'a>,
+    cursor: usize,
+    captures: T
 }
 
-pub trait PatternExtensions<'a> {
+trait PatternExtensions<'a> {
     fn find_c(self, haystack: &'a str) -> Option<usize>;
     fn complete(self, haystack: &'a str) -> bool;
 }
@@ -51,7 +51,6 @@ impl<'a, P> PatternExtensions<'a> for P where P: Pattern<'a> {
 }
 
 impl<'a> PatternExtensions<'a> for char {
-
     fn find_c(self, haystack: &'a str) -> Option<usize> {
 
         let mut opt_last: Option<usize> = None;
@@ -72,7 +71,6 @@ impl<'a> PatternExtensions<'a> for char {
 }
 
 impl<'a> PatternExtensions<'a> for &'a str {
-
     fn find_c(self, haystack: &'a str) -> Option<usize> {
 
         let mut opt_last: Option<usize> = None;
@@ -93,7 +91,6 @@ impl<'a> PatternExtensions<'a> for &'a str {
 }
 
 impl<'a, 'b> PatternExtensions<'a> for &'a &'b str {
-
     fn find_c(self, haystack: &'a str) -> Option<usize> {
 
         let mut opt_last: Option<usize> = None;
@@ -113,8 +110,12 @@ impl<'a, 'b> PatternExtensions<'a> for &'a &'b str {
     }
 }
 
-impl<'a> Matcher<'a, ()> {
+impl<'a, T> Matcher<'a, T> {
+    pub fn path(&'a self) -> &'a str { self.parts.path }
+    pub fn query(&'a self) -> Option<&'a str> { self.parts.query }
+}
 
+impl<'a> Matcher<'a, ()> {
     pub fn build(uri: &'a ::hyper::uri::RequestUri) ->  Self {
         let (path, query) = match *uri {            
             ::hyper::uri::RequestUri::AbsolutePath(ref s) => {                
@@ -129,8 +130,8 @@ impl<'a> Matcher<'a, ()> {
             },
             _ => panic!("Unexpected request URI")
         };
-        let uri = Uri { path: path, query: query };
-        Matcher { uri: uri, cursor: 0, captures: () }
+        let parts = Parts { path: path, query: query };
+        Matcher { parts: parts, cursor: 0, captures: () }
     }
 }
 
@@ -141,10 +142,11 @@ macro_rules! impls {
             impl<'a> Matcher<'a, $cur> {
                 
                 pub fn chomp<P: Pattern<'a>>(&self, pat: P) -> Option<Self> {
-                    if let Some(end) = 
-                        PatternExtensions::find_c(pat, &self.uri.path[self.cursor..]) {
+                    let path = &self.parts.path[self.cursor..];
+
+                    if let Some(end) = PatternExtensions::find_c(pat, path) {
                         let out = Matcher {
-                            uri: self.uri,
+                            parts: self.parts,
                             cursor: self.cursor + end,
                             captures: self.captures
                         };
@@ -155,10 +157,12 @@ macro_rules! impls {
                 }
 
                 pub fn complete<P: Pattern<'a>>(&self, pat: P) -> Option<Self> {
-                    if PatternExtensions::complete(pat, &self.uri.path[self.cursor..]) {
+                    let path = &self.parts.path[self.cursor..];
+                    
+                    if PatternExtensions::complete(pat, path) {
                         let out = Matcher {
-                            uri: self.uri,
-                            cursor: self.uri.path.len(),
+                            parts: self.parts,
+                            cursor: self.parts.path.len(),
                             captures: self.captures
                         };
                         Some(out)
@@ -168,21 +172,23 @@ macro_rules! impls {
                     
                 }
 
-                pub fn take_while<P: Pattern<'a>>(&self, pat: P) 
+                pub fn capture_while<P: Pattern<'a>>(&self, pat: P) 
                     -> Option<Matcher<'a, $nxt>> {
-
-                    if let Some(end) = 
-                        PatternExtensions::find_c(pat, &self.uri.path[self.cursor..]) {
+                    let path = &self.parts.path[self.cursor..];
+                    
+                    if let Some(end) = PatternExtensions::find_c(pat, path) {
                         
+                        let end = self.cursor + end;
+
                         let (
                             $($ex, )*
                         ) = self.captures;
 
-                        let caps = ( $($ex,)* (self.cursor, self.cursor + end), );
+                        let caps = ( $($ex,)* (self.cursor, end), );
 
                         let out = Matcher {
-                            uri: self.uri,
-                            cursor: self.cursor + end,
+                            parts: self.parts,
+                            cursor: end,
                             captures: caps
                         };
                         Some(out)
@@ -191,9 +197,8 @@ macro_rules! impls {
                     }
                 }
 
-                pub fn take_rest(&self) -> Matcher<'a, $nxt> {
-
-                    let end = self.uri.path.len();
+                pub fn capture_rest(&self) -> Matcher<'a, $nxt> {
+                    let end = self.parts.path.len();
 
                     let (
                         $($ex, )*
@@ -202,29 +207,31 @@ macro_rules! impls {
                     let caps = ( $($ex,)* (self.cursor, end), );
 
                     let out = Matcher { 
+                        parts: self.parts,
                         cursor: end, 
-                        uri: self.uri,
                         captures: caps
                     };
 
                     out
                 }
 
-                pub fn take_until<P: Pattern<'a>>(&self, pat: P) 
+                pub fn capture_until<P: Pattern<'a>>(&self, pat: P) 
                     -> Matcher<'a, $nxt> {
+                    let path = &self.parts.path[self.cursor..];
 
-                    let end = self.uri.path[self.cursor..].find(pat)
-                        .unwrap_or_else(|| self.uri.path.len() - self.cursor);
+                    let end = path.find(pat).unwrap_or_else(|| path.len() );
+
+                    let end = self.cursor + end;
 
                     let (
                         $($ex, )*
                     ) = self.captures;
 
-                    let caps = ( $($ex,)* (self.cursor, self.cursor + end), );
+                    let caps = ( $($ex,)* (self.cursor, end), );
 
                     let out = Matcher { 
-                        cursor: self.cursor + end, 
-                        uri: self.uri,
+                        parts: self.parts,
+                        cursor: end, 
                         captures: caps
                     };
 
@@ -246,7 +253,7 @@ macro_rules! impls {
                 $($ex, )+
             ) = self.captures;
             (
-                $(&self.uri.path[($ex.0)..($ex.1)],)+
+                $(&self.parts.path[($ex.0)..($ex.1)],)+
             )
             
         }
@@ -286,41 +293,41 @@ impls!{
         (a,b,c,d,e,),
         (&str,&str,&str,&str,&str)
     ]
-    // ,
-    // [
-    //     ((usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize)), 
-    //     ((usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize)), 
-    //     (a,b,c,d,e,f,),
-    //     (&str,&str,&str,&str,&str,&str)
-    // ]
-    // ,
-    // [
-    //     ((usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize)), 
-    //     ((usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize)), 
-    //     (a,b,c,d,e,f,g,),
-    //     (&str,&str,&str,&str,&str,&str,&str)
-    // ]
-    // ,
-    // [
-    //     ((usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize)), 
-    //     ((usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize)), 
-    //     (a,b,c,d,e,f,g,h,),
-    //     (&str,&str,&str,&str,&str,&str,&str,&str)
-    // ]
-    // ,
-    // [
-    //     ((usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize)), 
-    //     ((usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize)), 
-    //     (a,b,c,d,e,f,g,h,i,),
-    //     (&str,&str,&str,&str,&str,&str,&str,&str,&str)
-    // ]
-    // ,
-    // [
-    //     ((usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize)), 
-    //     ((usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize)), 
-    //     (a,b,c,d,e,f,g,h,i,j,),
-    //     (&str,&str,&str,&str,&str,&str,&str,&str,&str,&str)
-    // ]
+    ,
+    [
+        ((usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize)), 
+        ((usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize)), 
+        (a,b,c,d,e,f,),
+        (&str,&str,&str,&str,&str,&str)
+    ]
+    ,
+    [
+        ((usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize)), 
+        ((usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize)), 
+        (a,b,c,d,e,f,g,),
+        (&str,&str,&str,&str,&str,&str,&str)
+    ]
+    ,
+    [
+        ((usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize)), 
+        ((usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize)), 
+        (a,b,c,d,e,f,g,h,),
+        (&str,&str,&str,&str,&str,&str,&str,&str)
+    ]
+    ,
+    [
+        ((usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize)), 
+        ((usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize)), 
+        (a,b,c,d,e,f,g,h,i,),
+        (&str,&str,&str,&str,&str,&str,&str,&str,&str)
+    ]
+    ,
+    [
+        ((usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize)), 
+        ((usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize),(usize, usize)), 
+        (a,b,c,d,e,f,g,h,i,j,),
+        (&str,&str,&str,&str,&str,&str,&str,&str,&str,&str)
+    ]
 
 }
 
