@@ -18,13 +18,13 @@ pub struct Matcher<'a, T=()> {
     captures: T
 }
 
-trait PatternExtensions<'a> {
+pub trait PatternLike<'a> {
     fn find_c(self, haystack: &'a str) -> Option<usize>;
     fn complete(self, haystack: &'a str) -> bool;
 }
 
-impl<'a, P> PatternExtensions<'a> for P where P: Pattern<'a> {
-    default fn find_c(self, haystack: &'a str) -> Option<usize> {
+impl<'a, F> PatternLike<'a> for F where F: FnMut(char) -> bool {
+    fn find_c(self, haystack: &'a str) -> Option<usize> {
 
         let mut opt_last: Option<usize> = None;
         let mut searcher = self.into_searcher(haystack);
@@ -37,7 +37,7 @@ impl<'a, P> PatternExtensions<'a> for P where P: Pattern<'a> {
         opt_last
     }
 
-    default fn complete(self, haystack: &'a str) -> bool {
+    fn complete(self, haystack: &'a str) -> bool {
         let mut searcher = self.into_searcher(haystack);
         loop {
             match searcher.next() {
@@ -50,7 +50,7 @@ impl<'a, P> PatternExtensions<'a> for P where P: Pattern<'a> {
     }
 }
 
-impl<'a> PatternExtensions<'a> for char {
+impl<'a> PatternLike<'a> for char {
     fn find_c(self, haystack: &'a str) -> Option<usize> {
 
         let mut opt_last: Option<usize> = None;
@@ -70,27 +70,7 @@ impl<'a> PatternExtensions<'a> for char {
     }
 }
 
-impl<'a> PatternExtensions<'a> for &'a str {
-    fn find_c(self, haystack: &'a str) -> Option<usize> {
-
-        let mut opt_last: Option<usize> = None;
-        let mut searcher = self.into_searcher(haystack);
-        if let SearchStep::Match(0, e) = searcher.next() { 
-            opt_last = Some(e);
-        }
-        opt_last
-    }
-
-    fn complete(self, haystack: &'a str) -> bool {
-        let mut searcher = self.into_searcher(haystack);
-        match searcher.next() { 
-            SearchStep::Match(0, e) if e == haystack.len() => true ,
-            _ => false
-        }
-    }
-}
-
-impl<'a, 'b> PatternExtensions<'a> for &'a &'b str {
+impl<'a> PatternLike<'a> for &'a str {
     fn find_c(self, haystack: &'a str) -> Option<usize> {
 
         let mut opt_last: Option<usize> = None;
@@ -141,10 +121,10 @@ macro_rules! impls {
         $(
             impl<'a> Matcher<'a, $cur> {
                 
-                pub fn chomp<P: Pattern<'a>>(&self, pat: P) -> Option<Self> {
+                pub fn chomp<P: PatternLike<'a>>(&self, pat: P) -> Option<Self> {
                     let path = &self.parts.path[self.cursor..];
 
-                    if let Some(end) = PatternExtensions::find_c(pat, path) {
+                    if let Some(end) = PatternLike::find_c(pat, path) {
                         let out = Matcher {
                             parts: self.parts,
                             cursor: self.cursor + end,
@@ -156,10 +136,10 @@ macro_rules! impls {
                     }
                 }
 
-                pub fn complete<P: Pattern<'a>>(&self, pat: P) -> Option<Self> {
+                pub fn complete<P: PatternLike<'a>>(&self, pat: P) -> Option<Self> {
                     let path = &self.parts.path[self.cursor..];
                     
-                    if PatternExtensions::complete(pat, path) {
+                    if PatternLike::complete(pat, path) {
                         let out = Matcher {
                             parts: self.parts,
                             cursor: self.parts.path.len(),
@@ -172,11 +152,11 @@ macro_rules! impls {
                     
                 }
 
-                pub fn capture_while<P: Pattern<'a>>(&self, pat: P) 
+                pub fn capture_while<P: PatternLike<'a>>(&self, pat: P) 
                     -> Option<Matcher<'a, $nxt>> {
                     let path = &self.parts.path[self.cursor..];
                     
-                    if let Some(end) = PatternExtensions::find_c(pat, path) {
+                    if let Some(end) = PatternLike::find_c(pat, path) {
                         
                         let end = self.cursor + end;
 

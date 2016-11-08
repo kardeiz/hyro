@@ -48,12 +48,16 @@ fn main() {
             return;
         }
 
-        if let Some(m) = matcher.chomp("/bars/").iter()
-            .flat_map(|m| m.capture_while(char::is_numeric) )
-            .flat_map(|m| m.chomp('/') )
+        if let Some(m) = matcher.complete("/my/page") {
+            res.send(b"MY PAGE").unwrap();
+            return;
+        }
+
+        if let Some(m) = matcher.chomp("/bars/")
+            .and_then(|m| m.capture_while(char::is_numeric) )
+            .and_then(|m| m.chomp('/') )
             .map(|m| m.capture_until('.') )
-            .map(|m| m.capture_rest() )
-            .next() {
+            .map(|m| m.capture_rest() ) {
             
             let (id, action, format) = m.captures();
 
